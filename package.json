@@ -1,6 +1,6 @@
 {
   "name": "@alphabite/medusa-storyblok",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Alphabite's Medusa Storyblok Plugin",
   "author": "Alphabite (https://alphabite.io)",
   "license": "MIT",
@@ -86,6 +86,8 @@
     "node": ">=20"
   },
   "dependencies": {
+    "axios": "^1.13.2",
+    "axios-rate-limit": "^1.4.0",
     "image-size": "^2.0.2",
     "storyblok-js-client": "^7.2.1"
   }

@@ -2,6 +2,8 @@ import z from "zod";
 import { Logger } from "@medusajs/medusa";
 import StoryblokClient, { ISbStoryData } from "storyblok-js-client";
 import sizeOf from "image-size";
+import axios from "axios";
+import rateLimit, { RateLimitedAxiosInstance } from "axios-rate-limit";
 import {
   AlphabiteStoryblokPluginOptions,
   CreateSbProductStoryInput,
@@ -45,10 +47,19 @@ export const optionsSchema = z.object({
   }),
 });
 
+const storyblokAxios = ({ spaceId }: { spaceId: string }) =>
+  rateLimit(
+    axios.create({
+      baseURL: `https://mapi.storyblok.com/v1/spaces/${spaceId}`,
+    }),
+    { maxRequests: 5, perMilliseconds: 1000 }
+  );
+
 export default class StoryblokModuleService extends MedusaService({}) {
   private options: AlphabiteStoryblokPluginOptions;
   private storyblokClient: StoryblokClient;
   private logger: Logger;
+  private storyblokAxios: RateLimitedAxiosInstance;
 
   static validateOptions(options: AlphabiteStoryblokPluginOptions): void | never {
     const parsed = optionsSchema.safeParse(options);
@@ -64,6 +75,7 @@ export default class StoryblokModuleService extends MedusaService({}) {
     super(...arguments);
     this.options = options;
     this.logger = logger;
+    this.storyblokAxios = storyblokAxios({ spaceId: options.spaceId });
 
     this.storyblokClient = new StoryblokClient({
       accessToken: options.accessToken,
@@ -441,12 +453,11 @@ export default class StoryblokModuleService extends MedusaService({}) {
   private async getAssetsByFolder(folderId: string): Promise<Map<string, ISbImageAsset>> {
     const { spaceId, personalAccessToken } = this.options;
 
-    const response = await fetch(`https://mapi.storyblok.com/v1/spaces/${spaceId}/assets?in_folder=${folderId}`, {
-      method: "GET",
+    const response = await this.storyblokAxios.get(`/assets?in_folder=${folderId}`, {
       headers: { Authorization: personalAccessToken },
     });
 
-    const data = await response.json();
+    const data = response.data;
     const assetsMap = new Map<string, ISbImageAsset>();
 
     data.assets?.forEach((asset: ISbImageAsset) => {
@@ -461,29 +472,31 @@ export default class StoryblokModuleService extends MedusaService({}) {
   private async getOrCreateAssetFolder({ slug }: GetOrCreateSbAssetFolderInput) {
     const { spaceId, personalAccessToken } = this.options;
 
-    const foldersRes = await fetch(`https://mapi.storyblok.com/v1/spaces/${spaceId}/asset_folders/`, {
-      method: "GET",
+    const foldersRes = await this.storyblokAxios.get(`/asset_folders/`, {
       headers: { Authorization: personalAccessToken },
     });
 
-    const folders = await foldersRes.json();
+    const folders = foldersRes.data;
     const existing = folders.asset_folders?.find((f) => f.name.toLowerCase() === slug);
 
     if (existing) return existing.id as string;
 
-    const createRes = await fetch(`https://mapi.storyblok.com/v1/spaces/${spaceId}/asset_folders/`, {
-      method: "POST",
-      headers: {
-        Authorization: personalAccessToken,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
+    const createRes = await this.storyblokAxios.post(
+      `/asset_folders/`,
+      {
         asset_folder: {
           name: slug,
         },
-      }),
-    });
-    const result = await createRes.json();
+      },
+      {
+        headers: {
+          Authorization: personalAccessToken,
+          "Content-Type": "application/json",
+        },
+      }
+    );
+
+    const result = createRes.data;
 
     return result.asset_folder?.id as string;
   }
@@ -492,12 +505,11 @@ export default class StoryblokModuleService extends MedusaService({}) {
     const { spaceId, personalAccessToken } = this.options;
 
     // First, find the folder
-    const foldersRes = await fetch(`https://mapi.storyblok.com/v1/spaces/${spaceId}/asset_folders/`, {
-      method: "GET",
+    const foldersRes = await this.storyblokAxios.get(`/asset_folders/`, {
       headers: { Authorization: personalAccessToken },
     });
 
-    const folders = await foldersRes.json();
+    const folders = foldersRes.data;
     const folderToDelete = folders.asset_folders?.find((f: any) => f.name.toLowerCase() === slug);
 
     if (!folderToDelete) {
@@ -516,8 +528,7 @@ export default class StoryblokModuleService extends MedusaService({}) {
 
       for (const [filename, asset] of assetsInFolder.entries()) {
         try {
-          await fetch(`https://mapi.storyblok.com/v1/spaces/${spaceId}/assets/${asset.id}`, {
-            method: "DELETE",
+          await this.storyblokAxios.delete(`/assets/${asset.id}`, {
             headers: { Authorization: personalAccessToken },
           });
           this.logger.info(`Deleted asset: ${filename}`);
@@ -528,8 +539,7 @@ export default class StoryblokModuleService extends MedusaService({}) {
     }
 
     // Delete the folder itself
-    await fetch(`https://mapi.storyblok.com/v1/spaces/${spaceId}/asset_folders/${folderId}`, {
-      method: "DELETE",
+    await this.storyblokAxios.delete(`/asset_folders/${folderId}`, {
       headers: { Authorization: personalAccessToken },
     });
 
@@ -578,23 +588,25 @@ export default class StoryblokModuleService extends MedusaService({}) {
     const size = `${dimensions.width}x${dimensions.height}`;
 
     // Step 2: Request signed upload
-    const signedRes = await fetch(`https://mapi.storyblok.com/v1/spaces/${spaceId}/assets`, {
-      method: "POST",
-      headers: {
-        Authorization: personalAccessToken,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
+    const signedRes = await this.storyblokAxios.post(
+      `/assets`,
+      {
         filename: filenameFromUrl,
         size,
         asset_folder_id: folderId,
         validate_upload: 1,
-      }),
-    });
+      },
+      {
+        headers: {
+          Authorization: personalAccessToken,
+          "Content-Type": "application/json",
+        },
+      }
+    );
 
-    const signedData = await signedRes.json();
+    const signedData = signedRes.data;
 
-    if (!signedRes.ok || !signedData || !signedData.post_url) {
+    if (!signedData || !signedData.post_url) {
       throw new MedusaError(
         MedusaError.Types.INVALID_DATA,
         `Failed to get signed upload data: ${JSON.stringify(signedData)}`
@@ -619,24 +631,20 @@ export default class StoryblokModuleService extends MedusaService({}) {
     }
 
     // Step 4: Finalize the upload
-    const uploadImage = await fetch(
-      `https://mapi.storyblok.com/v1/spaces/${spaceId}/assets/${signedData.id}/finish_upload`,
-      {
-        method: "GET",
-        headers: {
-          Authorization: personalAccessToken,
-        },
-      }
-    );
+    const uploadImage = await this.storyblokAxios.get(`/assets/${signedData.id}/finish_upload`, {
+      headers: {
+        Authorization: personalAccessToken,
+      },
+    });
 
-    if (!uploadImage.ok) {
+    if (!uploadImage?.data) {
       throw new MedusaError(
         MedusaError.Types.UNEXPECTED_STATE,
-        `Failed to finalize image upload: ${await uploadImage.text()}`
+        `Failed to finalize image upload: ${uploadImage?.data?.text?.()}`
       );
     }
 
-    const uploadedImage = await uploadImage.json();
+    const uploadedImage = uploadImage.data;
 
     // Fix the filename URL - remove S3 prefix if present
     if (uploadedImage.filename && uploadedImage.filename.includes("s3.amazonaws.com/a.storyblok.com")) {
