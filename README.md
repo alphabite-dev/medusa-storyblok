@@ -148,6 +148,8 @@ STORYBLOK_WEBHOOK_SECRET=your_webhook_secret
   4. Navigate to "Personal Access Tokens"
   5. Create a new token with appropriate permissions
 
+> **Important**: Make sure you are working with the correct `spaceId`, since the PAT grants write access to all of your Storyblok spaces.
+
 ## Storyblok Setup
 
 ### 1. Create a Products Folder
