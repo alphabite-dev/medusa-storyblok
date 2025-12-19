@@ -289,7 +289,8 @@ This dedicated page shows all your Medusa products with their sync status:
 - ✅ Variant thumbnail is uploaded (if exists)
 - ✅ Variant images are uploaded to the product's folder
 - ✅ Images are added to the variant's gallery
-- ✅ Smart deduplication prevents uploading images that already exist
+
+> **Important**: When a new product is created, the plugin will automatically also create its default variant (or the multiple variants you have added during creation), and it will upload the images added to the product or variants during creation
 
 #### 5. Variant Deletion
 
