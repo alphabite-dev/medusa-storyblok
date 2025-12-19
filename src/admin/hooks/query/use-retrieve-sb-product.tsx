@@ -3,7 +3,7 @@ import { FetchError } from "@medusajs/js-sdk";
 import { QUERY_KEYS } from "../query-keys";
 import { sdk } from "../../lib/sdk";
 
-type GetSbProductStoryRes = {
+export type GetSbProductStoryRes = {
   storyblok_editor_url: string;
 };
 

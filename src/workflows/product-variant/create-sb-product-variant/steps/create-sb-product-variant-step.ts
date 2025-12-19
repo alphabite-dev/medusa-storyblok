@@ -5,58 +5,47 @@ import StoryblokModuleService from "../../../../modules/storyblok/service";
 import { ProductVariantDTO } from "@medusajs/types";
 
 export type CreateSbProductVariantStepInput = {
-  variant_id: string;
+  product: {
+    id: string;
+    handle: string;
+  };
+  variants: {
+    id: string;
+    title: string;
+    metadata?: Record<string, any>;
+  }[];
 };
 
-export const createSbProductVariantStep = createStep(
+export const createSbProductVariantsStep = createStep(
   {
     name: "create-sb-product-variant",
   },
-  async ({ variant_id }: CreateSbProductVariantStepInput, { container }) => {
+  async ({ product, variants }: CreateSbProductVariantStepInput, { container }) => {
     const sbModuleService = container.resolve<StoryblokModuleService>(STORYBLOK_MODULE);
-    const query = container.resolve(ContainerRegistrationKeys.QUERY);
     const logger = container.resolve(ContainerRegistrationKeys.LOGGER);
+    const query = container.resolve(ContainerRegistrationKeys.QUERY);
 
     logger.info("Syncing Storyblok with Medusa products...");
 
-    const { data } = await query.graph({
-      entity: "product",
-      filters: { variants: { id: variant_id } },
-      fields: ["id", "handle", "variants.title", "variants.id", "variants.metadata"],
+    if (!variants?.length) {
+      logger.warn(`❌ No variants for product id: ${product.id}`);
+      return StepResponse.permanentFailure();
+    }
+
+    // Fetch variant images
+    const { data: variantsWithImages } = await query.graph({
+      entity: "product_variant",
+      filters: { id: variants.map((v) => v.id) },
+      fields: ["id", "title", "thumbnail", "images.url"],
     });
 
-    const product = data[0];
-    if (!product) {
-      logger.warn(`❌ No product found for variant_id: ${variant_id}`);
-      return StepResponse.permanentFailure();
-    }
-
-    const variants = product.variants;
-
-    const variant = variants.find((v) => v.id === variant_id);
-
-    if (!variant) {
-      logger.warn(`❌ Variant ${variant_id} not found for product id: ${product.id}`);
-      return StepResponse.permanentFailure();
-    }
-
-    const updatedStory = await sbModuleService.createProductVariant({
+    await sbModuleService.createProductVariant({
       productId: product.id,
-      productVariant: variant as ProductVariantDTO,
+      productVariants: variantsWithImages,
     });
 
-    logger.info(
-      `✅ Storyblok synced for product id: ${product.id}, variant id: ${variant_id}, slug: ${product.handle}`
-    );
+    logger.info(`✅ Storyblok product variants synced for product id: ${product.id}, slug: ${product.handle}`);
 
-    return new StepResponse(updatedStory);
-  },
-
-  async (rollbackData, { container }) => {
-    if (!rollbackData) return;
-
-    const logger = container.resolve(ContainerRegistrationKeys.LOGGER);
-
-    logger.warn("🔁 Storyblok update variants rollback started...");
+    return new StepResponse({});
   }
 );

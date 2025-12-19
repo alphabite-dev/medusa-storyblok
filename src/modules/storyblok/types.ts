@@ -1,4 +1,4 @@
-import { ProductVariantDTO } from "@medusajs/types";
+import { ProductVariantDTO, ProductDTO } from "@medusajs/types";
 import { ISbConfig, ISbCustomFetch, ISbStoriesParams } from "storyblok-js-client";
 
 export type AlphabiteStoryblokPluginOptions = {
@@ -79,20 +79,13 @@ export type ProductVariantBlok = {
 
 export type GalleryImageBlok = {
   component: "galleryImage";
-  image: {
-    filename: string;
-    alt?: string;
-  };
+  image: ISbImageAsset;
   isThumbnail?: boolean;
 };
 
-type GalleryBlok = GalleryImageBlok[];
+export type GalleryBlok = GalleryImageBlok[];
 
-export type CreateSbProductStoryInput = {
-  id: string;
-  handle: string;
-  title: string;
-};
+export type CreateSbProductStoryInput = Pick<ProductDTO, "id" | "handle" | "title" | "thumbnail" | "images">;
 
 export type CreateSbProductStoryPayload = {
   name: string;
@@ -102,6 +95,8 @@ export type CreateSbProductStoryPayload = {
     component: "product";
     medusaProductId: string;
     title: string;
+    gallery?: GalleryBlok;
+    variants?: ProductVariantBlok[];
   };
 };
 
@@ -116,6 +111,7 @@ export type UpdateSbProductStoryPayload = {
 };
 
 export type ListSbProductsStoriesInput = {
+  products_ids?: string;
   fetchOptions?: ISbCustomFetch;
   params?: ISbStoriesParams;
 };
@@ -129,10 +125,39 @@ export type DeleteSbProductInput = {
   id: string;
 };
 
-export type CreateSbProductVariantInput = { productId: string; productVariant: ProductVariantDTO };
+export type CreateSbProductVariantInput = {
+  productId: string;
+  productVariants: Pick<ProductVariantDTO, "id" | "title" | "thumbnail" | "images">[];
+};
 
 export type DeleteSbProductVariantInput = { product_id: string; product_variant_id: string };
 
 export interface GetStoryblokStoryEditorUrlInput {
   id: number | string;
 }
+
+export interface ISbImageAsset {
+  alt: string;
+  filename: string;
+  copyright?: string;
+  fieldtype?: string;
+  focus?: string;
+  id?: number;
+  is_external_url?: boolean;
+  name?: string;
+  title?: string;
+  meta_data?: {
+    quality?: number;
+    maxWidth?: number;
+  };
+}
+
+export type UploadImageToSbInput = {
+  imageUrl: string;
+  folderId: string;
+  altText?: string;
+};
+
+export type GetOrCreateSbAssetFolderInput = {
+  slug: string;
+};

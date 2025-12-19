@@ -14,8 +14,10 @@ export const createSbProductWorkflow = createWorkflow(
     store: true,
   },
   function ({ product_id }: CreateSbProduct) {
-    const result = createSbProductStep({ product_id });
+    const createdSbProduct = createSbProductStep({
+      product_id: product_id,
+    });
 
-    return new WorkflowResponse(result);
+    return new WorkflowResponse(createdSbProduct);
   }
 );
