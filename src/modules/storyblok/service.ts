@@ -131,12 +131,17 @@ export default class StoryblokModuleService extends MedusaService({}) {
           });
         }
 
-        // Upload all images from images array
-        if (images && images.length > 0) {
-          this.logger.info(`Uploading ${images.length} images for product: ${slug}`);
+        // Filter out the thumbnail from images array to avoid duplicates
+        const imagesToUpload = thumbnail 
+          ? images.filter((img) => img.url !== thumbnail)
+          : images;
+
+        // Upload all remaining images from images array
+        if (imagesToUpload && imagesToUpload.length > 0) {
+          this.logger.info(`Uploading ${imagesToUpload.length} images for product: ${slug}`);
 
           const uploadedImages = await Promise.all(
-            images.map((img) =>
+            imagesToUpload.map((img) =>
               this.uploadImageToStoryblok({
                 folderId: folderId!,
                 imageUrl: img.url,
@@ -313,12 +318,17 @@ export default class StoryblokModuleService extends MedusaService({}) {
               });
             }
 
-            // Upload all images from images array
-            if (productVariant.images && productVariant.images.length > 0) {
-              this.logger.info(`Uploading ${productVariant.images.length} images for variant: ${variantTitle}`);
+            // Filter out the thumbnail from images array to avoid duplicates
+            const imagesToUpload = productVariant.thumbnail
+              ? productVariant.images.filter((img) => img.url !== productVariant.thumbnail)
+              : productVariant.images;
+
+            // Upload all remaining images from images array
+            if (imagesToUpload && imagesToUpload.length > 0) {
+              this.logger.info(`Uploading ${imagesToUpload.length} images for variant: ${variantTitle}`);
 
               const uploadedImages = await Promise.all(
-                productVariant.images.map((img) =>
+                imagesToUpload.map((img) =>
                   this.uploadImageToStoryblok({
                     folderId: folderId!,
                     imageUrl: img.url,
