@@ -96,52 +96,13 @@ export default class StoryblokModuleService extends MedusaService({}) {
     try {
       const slug = handle;
 
-      // Create folder for product images
-      let folderId: string | undefined;
-      const productGallery: GalleryImageBlok[] = [];
-
-      if ((images && images.length > 0) || thumbnail) {
-        this.logger.info(`Creating folder for product: ${slug}`);
-        folderId = await this.getOrCreateAssetFolder({ slug });
-
-        // Upload thumbnail first if it exists
-        if (thumbnail) {
-          const uploadedThumbnail = await this.uploadImageToStoryblok({
-            folderId: folderId!,
-            imageUrl: thumbnail,
-            altText: title,
-          });
-
-          productGallery.push({
-            component: "galleryImage",
-            image: uploadedThumbnail,
-            isThumbnail: true,
-          });
-        }
-
-        // Upload all images from images array
-        if (images && images.length > 0) {
-          this.logger.info(`Uploading ${images.length} images for product: ${slug}`);
-
-          const uploadedImages = await Promise.all(
-            images.map((img) =>
-              this.uploadImageToStoryblok({
-                folderId: folderId!,
-                imageUrl: img.url,
-                altText: title,
-              })
-            )
-          );
-
-          uploadedImages.forEach((uploadedImg) => {
-            productGallery.push({
-              component: "galleryImage",
-              image: uploadedImg,
-              isThumbnail: false,
-            });
-          });
-        }
-      }
+      // Process images using the reusable method
+      const { gallery: productGallery } = await this.processProductImages({
+        slug,
+        thumbnail,
+        images,
+        title,
+      });
 
       const story: CreateSbProductStoryPayload = {
         name: title,
@@ -271,59 +232,20 @@ export default class StoryblokModuleService extends MedusaService({}) {
         return;
       }
 
-      // Get or create folder for product images (using product slug)
       const slug = productStory.slug;
-      let folderId: string | undefined;
 
       // Build variant bloks with image galleries
       const productVariantBloks = await Promise.all(
         productVariants.map(async (productVariant) => {
-          const variantGallery: GalleryImageBlok[] = [];
           const variantTitle = productVariant?.title || "Unnamed Variant";
 
-          if ((productVariant.images && productVariant.images.length > 0) || productVariant.thumbnail) {
-            if (!folderId) {
-              folderId = await this.getOrCreateAssetFolder({ slug });
-            }
-
-            // Upload thumbnail first if it exists
-            if (productVariant.thumbnail) {
-              const uploadedThumbnail = await this.uploadImageToStoryblok({
-                folderId: folderId!,
-                imageUrl: productVariant.thumbnail,
-                altText: variantTitle,
-              });
-
-              variantGallery.push({
-                component: "galleryImage",
-                image: uploadedThumbnail,
-                isThumbnail: true,
-              });
-            }
-
-            // Upload all images from images array
-            if (productVariant.images && productVariant.images.length > 0) {
-              this.logger.info(`Uploading ${productVariant.images.length} images for variant: ${variantTitle}`);
-
-              const uploadedImages = await Promise.all(
-                productVariant.images.map((img) =>
-                  this.uploadImageToStoryblok({
-                    folderId: folderId!,
-                    imageUrl: img.url,
-                    altText: variantTitle,
-                  })
-                )
-              );
-
-              uploadedImages.forEach((uploadedImg) => {
-                variantGallery.push({
-                  component: "galleryImage",
-                  image: uploadedImg,
-                  isThumbnail: false,
-                });
-              });
-            }
-          }
+          // Process variant images using the reusable method
+          const { gallery: variantGallery } = await this.processProductImages({
+            slug,
+            thumbnail: productVariant.thumbnail,
+            images: productVariant.images,
+            title: variantTitle,
+          });
 
           return {
             title: variantTitle,
@@ -381,6 +303,104 @@ export default class StoryblokModuleService extends MedusaService({}) {
     }
   }
 
+  async forceSyncProductStory({ id, handle, title, thumbnail, images = [] }: CreateSbProductStoryInput) {
+    try {
+      const slug = handle;
+
+      // Retrieve the existing product story
+      const existingProductStory = await this.retrieveProductStory({
+        productId: id,
+        params: {
+          version: "draft",
+        },
+      });
+
+      if (!existingProductStory) {
+        this.logger.error(`❌ No existing story found for force sync: ${slug} & id: ${id}`);
+        throw new MedusaError(MedusaError.Types.NOT_FOUND, "Story not found for force sync");
+      }
+
+      // Process images using the reusable method (smart deduplication included)
+      const { gallery: productGallery } = await this.processProductImages({
+        slug,
+        thumbnail,
+        images,
+        title,
+      });
+
+      // Build updated story payload
+      const story: UpdateSbProductStoryPayload = {
+        ...existingProductStory,
+        slug,
+        content: {
+          ...existingProductStory.content,
+          component: "product",
+          medusaProductId: id,
+          title,
+          gallery: productGallery,
+        },
+      };
+
+      const updatedProductStory = await this.update(existingProductStory.id.toString(), story);
+
+      this.logger.info(`✅ Force synced product story: ${slug}`);
+      return updatedProductStory as unknown as ISbStoryData<ProductStory>;
+    } catch (err) {
+      this.logger.error(`❌ Failed to force sync story for ${title}`, err);
+      throw new MedusaError(MedusaError.Types.UNEXPECTED_STATE, "Force sync failed");
+    }
+  }
+
+  async forceSyncProductVariants({ productId, productVariants }: CreateSbProductVariantInput) {
+    try {
+      const productStory = await this.retrieveProductStory({ productId });
+
+      if (!productStory) {
+        this.logger.warn(`❌ No Storyblok story found for product id: ${productId}`);
+        throw new MedusaError(MedusaError.Types.NOT_FOUND, "Product story not found");
+      }
+
+      const slug = productStory.slug;
+
+      // Build variant bloks with image galleries (replaces all existing variants)
+      const productVariantBloks = await Promise.all(
+        productVariants.map(async (productVariant) => {
+          const variantTitle = productVariant?.title || "Unnamed Variant";
+
+          // Process variant images using the reusable method
+          const { gallery: variantGallery } = await this.processProductImages({
+            slug,
+            thumbnail: productVariant.thumbnail,
+            images: productVariant.images,
+            title: variantTitle,
+          });
+
+          return {
+            title: variantTitle,
+            component: "productVariant",
+            medusaProductVariantId: productVariant.id,
+            ...(variantGallery.length > 0 && { gallery: variantGallery }),
+          };
+        })
+      );
+
+      // Replace all variants (force sync behavior)
+      const storyContent = {
+        ...productStory,
+        content: {
+          ...productStory.content,
+          variants: productVariantBloks,
+        },
+      };
+
+      await this.update(productStory.id, storyContent);
+      this.logger.info(`✅ Force synced ${productVariantBloks.length} variants for product: ${productId}`);
+    } catch (err) {
+      this.logger.error(`❌ Failed to force sync product variants for product id: ${productId}`, err);
+      throw new MedusaError(MedusaError.Types.UNEXPECTED_STATE, "Force sync variants failed");
+    }
+  }
+
   getSbStoryEditorUrl({ id }: GetStoryblokStoryEditorUrlInput): string {
     const { spaceId } = this.options;
     return `https://app.storyblok.com/#/me/spaces/${spaceId}/stories/0/0/${id}`;
@@ -388,6 +408,66 @@ export default class StoryblokModuleService extends MedusaService({}) {
 
   getOptions() {
     return this.options;
+  }
+
+  private async processProductImages({
+    slug,
+    thumbnail,
+    images,
+    title,
+  }: {
+    slug: string;
+    thumbnail?: string;
+    images?: Array<{ url: string }>;
+    title: string;
+  }): Promise<{ folderId?: string; gallery: GalleryImageBlok[] }> {
+    let folderId: string | undefined;
+    const gallery: GalleryImageBlok[] = [];
+
+    if ((images && images.length > 0) || thumbnail) {
+      this.logger.info(`Creating folder for: ${slug}`);
+      folderId = await this.getOrCreateAssetFolder({ slug });
+
+      // Upload thumbnail first if it exists
+      if (thumbnail) {
+        const uploadedThumbnail = await this.uploadImageToStoryblok({
+          folderId: folderId!,
+          imageUrl: thumbnail,
+          altText: title,
+        });
+
+        gallery.push({
+          component: "galleryImage",
+          image: uploadedThumbnail,
+          isThumbnail: true,
+        });
+      }
+
+      // Upload all images from images array
+      if (images && images.length > 0) {
+        this.logger.info(`Uploading ${images.length} images for: ${title}`);
+
+        const uploadedImages = await Promise.all(
+          images.map((img) =>
+            this.uploadImageToStoryblok({
+              folderId: folderId!,
+              imageUrl: img.url,
+              altText: title,
+            })
+          )
+        );
+
+        uploadedImages.forEach((uploadedImg) => {
+          gallery.push({
+            component: "galleryImage",
+            image: uploadedImg,
+            isThumbnail: false,
+          });
+        });
+      }
+    }
+
+    return { folderId, gallery };
   }
 
   mapImageUrl(src: string): string {

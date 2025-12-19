@@ -19,6 +19,9 @@ import { ArrowPath, ArrowUpRightOnBox } from "@medusajs/icons";
 import { useListSbProducts } from "../../hooks/query/use-retrieve-sb-product";
 import { useCreateSbProduct } from "../../hooks/mutation/use-create-sb-product";
 import { useBulkSyncSbProducts } from "../../hooks/mutation/use-bulk-sync-sb-products";
+import { useForceSyncSbProduct } from "../../hooks/mutation/use-force-sync-sb-product";
+import { useBulkForceSyncSbProducts } from "../../hooks/mutation/use-bulk-force-sync-sb-products";
+import { ActionMenu } from "../action-menu";
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
 
@@ -45,20 +48,39 @@ const columns = [
     header: "Status",
     cell: ({ getValue, row }) => {
       const isActive = getValue() === "Synced";
-      const { mutateAsync, isPending } = useCreateSbProduct();
+      const { mutateAsync: createSync, isPending: isCreating } = useCreateSbProduct();
+      const { mutateAsync: forceSync, isPending: isForceSyncing } = useForceSyncSbProduct();
 
       if (isActive) {
-        return <StatusBadge color="green">{getValue()}</StatusBadge>;
+        return (
+          <div className="flex items-center gap-2">
+            <StatusBadge color="green">{getValue()}</StatusBadge>
+            <ActionMenu
+              groups={[
+                {
+                  actions: [
+                    {
+                      icon: <ArrowPath />,
+                      label: "Force Sync",
+                      onClick: () => forceSync({ product_id: row.original.id }),
+                      disabled: isForceSyncing,
+                    },
+                  ],
+                },
+              ]}
+            />
+          </div>
+        );
       }
 
       return (
         <div className="flex gap-2">
-          <StatusBadge color={"red"}>{getValue()}</StatusBadge>
+          <StatusBadge color="red">{getValue()}</StatusBadge>
           <Button
             variant="primary"
             size="small"
-            onClick={async () => mutateAsync({ product_id: row.original.id })}
-            isLoading={isPending}
+            onClick={async () => createSync({ product_id: row.original.id })}
+            isLoading={isCreating}
           >
             <ArrowPath />
           </Button>
@@ -89,6 +111,8 @@ const columns = [
 const commandHelper = createDataTableCommandHelper();
 
 const useCommands = () => {
+  const bulkForceSync = useBulkForceSyncSbProducts();
+
   return [
     commandHelper.command({
       label: "Sync",
@@ -97,6 +121,14 @@ const useCommands = () => {
         const selectedIds = Object.keys(selection);
         const bulkSync = useBulkSyncSbProducts();
         await bulkSync.mutateAsync({ product_ids: selectedIds });
+      },
+    }),
+    commandHelper.command({
+      label: "Force Sync",
+      shortcut: "F",
+      action: async (selection) => {
+        const selectedIds = Object.keys(selection);
+        await bulkForceSync.mutateAsync({ product_ids: selectedIds });
       },
     }),
   ];

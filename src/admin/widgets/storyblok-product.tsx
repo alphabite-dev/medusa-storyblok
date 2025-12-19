@@ -4,6 +4,8 @@ import { ArrowUpRightOnBox, ArrowPath } from "@medusajs/icons";
 import { Button, Container, StatusBadge } from "@medusajs/ui";
 import { useRetrieveSbProduct } from "../hooks/query/use-retrieve-sb-product";
 import { useCreateSbProduct } from "../hooks/mutation/use-create-sb-product";
+import { useForceSyncSbProduct } from "../hooks/mutation/use-force-sync-sb-product";
+import { ActionMenu } from "../components/action-menu";
 
 const ProductWidget = ({ data }: DetailWidgetProps<AdminProduct>) => {
   const { data: sbProductData, isLoading } = useRetrieveSbProduct({
@@ -11,6 +13,7 @@ const ProductWidget = ({ data }: DetailWidgetProps<AdminProduct>) => {
   });
 
   const { mutateAsync, isPending } = useCreateSbProduct();
+  const { mutateAsync: forceSyncMutate, isPending: isForceSyncing } = useForceSyncSbProduct();
 
   return (
     <Container>
@@ -22,11 +25,27 @@ const ProductWidget = ({ data }: DetailWidgetProps<AdminProduct>) => {
           </StatusBadge>
         </h2>
         {sbProductData ? (
-          <a href={sbProductData.storyblok_editor_url} target="_blank" rel="noreferrer">
-            <Button variant="secondary" isLoading={isLoading}>
-              <ArrowUpRightOnBox /> Open in Storyblok
-            </Button>
-          </a>
+          <div className="flex items-center gap-2">
+            <a href={sbProductData.storyblok_editor_url} target="_blank" rel="noreferrer">
+              <Button variant="secondary" isLoading={isLoading}>
+                <ArrowUpRightOnBox /> Open in Storyblok
+              </Button>
+            </a>
+            <ActionMenu
+              groups={[
+                {
+                  actions: [
+                    {
+                      icon: <ArrowPath />,
+                      label: "Force Sync",
+                      onClick: () => forceSyncMutate({ product_id: data.id }),
+                      disabled: isForceSyncing,
+                    },
+                  ],
+                },
+              ]}
+            />
+          </div>
         ) : (
           <Button variant="primary" onClick={async () => mutateAsync({ product_id: data.id })} isLoading={isPending}>
             <ArrowPath />
