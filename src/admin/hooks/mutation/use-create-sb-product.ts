@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { GetSbProductStoryRes } from "../query/use-retrieve-sb-product";
+import { GetSbProductStoryRes, ListSbProductsRes } from "../query/use-retrieve-sb-product";
 import { QUERY_KEYS } from "../query-keys";
 import { toast } from "@medusajs/ui";
 
@@ -27,6 +27,42 @@ export const useCreateSbProduct = () => {
 
         return { ...oldData, ...data };
       });
+
+      queryClient.setQueriesData<ListSbProductsRes>(
+        {
+          predicate: (query) => {
+            if (query.queryHash.includes("sb_products")) {
+              return true;
+            }
+
+            return false;
+          },
+        },
+        (oldData) => {
+          if (!oldData) {
+            queryClient.invalidateQueries({
+              predicate(query) {
+                if (query.queryHash.includes("sb_products")) {
+                  return true;
+                }
+
+                return false;
+              },
+            });
+
+            return;
+          }
+
+          const updatedProducts = oldData.products.map((product) => {
+            if (product.id === input.product_id) {
+              return { ...product, storyblok_editor_url: data.storyblok_editor_url };
+            }
+            return product;
+          });
+
+          return { ...oldData, products: updatedProducts };
+        }
+      );
 
       toast.success("Product successfully synced to Storyblok!", { duration: 3000 });
     },

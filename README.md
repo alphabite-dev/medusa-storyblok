@@ -63,26 +63,28 @@ In your `medusa-config.js` or `medusa-config.ts`, add the plugin to the `plugins
 ```typescript
 import { AlphabiteStoryblokPluginOptions } from "@alphabite/medusa-storyblok";
 
-const plugins = [
-  // ... other plugins
-  {
-    resolve: "@alphabite/medusa-storyblok",
-    options: {
-      accessToken: process.env.STORYBLOK_ACCESS_TOKEN,
-      region: process.env.STORYBLOK_REGION, // "eu" or "us"
-      personalAccessToken: process.env.STORYBLOK_PAT,
-      spaceId: process.env.STORYBLOK_SPACE_ID,
-      productsParentFolderId: process.env.STORYBLOK_PRODUCTS_PARENT_FOLDER_ID,
-      productsParentFolderName: "products",
-      deleteProductOnSbProductStoryDelete: false,
-      webhookSecret: process.env.STORYBLOK_WEBHOOK_SECRET,
-      imageOptimization: {
-        quality: 80,
-        width: 800,
-      },
-    } satisfies AlphabiteStoryblokPluginOptions,
-  },
-];
+plugins: {
+  [
+    // ... other plugins
+    {
+      resolve: "@alphabite/medusa-storyblok",
+      options: {
+        accessToken: process.env.STORYBLOK_ACCESS_TOKEN,
+        region: process.env.STORYBLOK_REGION, // "eu" or "us"
+        personalAccessToken: process.env.STORYBLOK_PAT,
+        spaceId: process.env.STORYBLOK_SPACE_ID,
+        productsParentFolderId: process.env.STORYBLOK_PRODUCTS_PARENT_FOLDER_ID,
+        productsParentFolderName: "products",
+        deleteProductOnSbProductStoryDelete: false,
+        webhookSecret: process.env.STORYBLOK_WEBHOOK_SECRET,
+        imageOptimization: {
+          quality: 80,
+          width: 800,
+        },
+      } satisfies AlphabiteStoryblokPluginOptions,
+    },
+  ];
+}
 ```
 
 ### 2. Environment Variables
@@ -138,7 +140,7 @@ STORYBLOK_WEBHOOK_SECRET=your_webhook_secret
 **Personal Access Token (`personalAccessToken`)**:
 
 - Used for creating, updating, and deleting stories (Management API)
-- Write access required for syncing products
+- Required to grant write access for syncing products
 - **How to get it**:
   1. Go to your Storyblok account (top-right corner)
   2. Click on "My Account"
@@ -150,13 +152,14 @@ STORYBLOK_WEBHOOK_SECRET=your_webhook_secret
 
 ### 1. Create a Products Folder
 
-1. In Storyblok, create a folder where all product stories will be stored (e.g., "products")
+1. In Storyblok, go to the Content tab and create a folder where all product stories will be stored (e.g., "products")
 2. Open the folder and note the **Folder ID** from the URL:
    ```
    https://app.storyblok.com/#/me/spaces/{space_id}/stories/0/0/{folder_id}
                                                                    ↑ This is your folder ID
    ```
 3. Use this ID for `productsParentFolderId` in your configuration
+4. Use the name of the folder for `productsParentFolderName`
 
 ### 2. Create Required Bloks
 

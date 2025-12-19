@@ -24,3 +24,30 @@ export const useRetrieveSbProduct = ({ product_id, options }: UseGetProductSbSta
     ...options,
   });
 };
+
+export interface ListSbProductsRes {
+  products: { id: string; name: string; handle: string; storyblok_editor_url: string | null }[];
+  count: number;
+  limit: number;
+  offset: number;
+}
+
+export interface UseListSbProductsInput {
+  offset?: number;
+  limit?: number;
+  options?: Omit<UseQueryOptions<Record<any, any>, FetchError, ListSbProductsRes, QueryKey>, "queryKey" | "queryFn">;
+}
+
+export const useListSbProducts = ({ offset = 0, limit = 20, options }: UseListSbProductsInput) => {
+  return useQuery({
+    queryKey: QUERY_KEYS.SB_PRODUCTS({ offset, limit }),
+    queryFn: async (): Promise<ListSbProductsRes> => {
+      const stories = await sdk.client.fetch<ListSbProductsRes>(`/admin/storyblok/story`, {
+        query: { offset, limit },
+      });
+
+      return stories;
+    },
+    ...options,
+  });
+};
