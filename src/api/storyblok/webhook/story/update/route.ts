@@ -12,7 +12,6 @@ import {
 } from "@medusajs/core-flows";
 import { UpdateProductVariantWorkflowInputDTO, UpsertProductImageDTO } from "@medusajs/types";
 
-
 export const POST = async (req: MedusaRequest<StoryblokWebhookInput>, res: MedusaResponse) => {
   const container = req.scope;
   const logger = container.resolve(ContainerRegistrationKeys.LOGGER);
@@ -57,9 +56,9 @@ export const POST = async (req: MedusaRequest<StoryblokWebhookInput>, res: Medus
           {
             id: productStory.content.medusaProductId,
             handle: productStory.slug,
-            ...(!!thumbnail && { thumbnail: thumbnail.image.filename }),
+            thumbnail: thumbnail ? mapImageUrl(thumbnail.image.filename) : null,
             metadata: {
-              ...(!!thumbnail && { thumbnail_alt: thumbnail.image.alt || "" }),
+              thumbnail_alt: thumbnail?.image.alt || "",
             },
             images: [...images, ...flattenVariantImages(variantsImagesMap)],
           },
@@ -80,12 +79,7 @@ export const POST = async (req: MedusaRequest<StoryblokWebhookInput>, res: Medus
     const resultVariants = updatedProducts.result[0].variants || [];
 
     for (const variantId of Object.keys(variantsImagesMap)) {
-      const { add, remove } = computeVariantImageDiff(
-        variantId,
-        variantsImagesMap,
-        urlToImageId,
-        resultVariants
-      );
+      const { add, remove } = computeVariantImageDiff(variantId, variantsImagesMap, urlToImageId, resultVariants);
 
       if (add.length > 0 || remove.length > 0) {
         await batchVariantImagesWorkflow(container).run({
@@ -107,13 +101,9 @@ export const POST = async (req: MedusaRequest<StoryblokWebhookInput>, res: Medus
     return res.status(500).end();
   }
 };
- 
 
 // Types
-type VariantImagesMap = Record<
-  string,
-  { thumbnail: UpsertProductImageDTO | null; images: UpsertProductImageDTO[] }
->;
+type VariantImagesMap = Record<string, { thumbnail: UpsertProductImageDTO | null; images: UpsertProductImageDTO[] }>;
 
 // Helper Functions
 
@@ -167,12 +157,13 @@ function buildMappedVariants(
 ): UpdateProductVariantWorkflowInputDTO[] {
   return variants.map((v) => {
     const variantData = variantsImagesMap[v.medusaProductVariantId];
-    const thumbnailAlt = variantData?.thumbnail?.metadata?.alt as string | undefined;
-    
+    const thumbnail = variantData?.thumbnail;
+    const thumbnailAlt = thumbnail?.metadata?.alt as string | undefined;
+
     return {
       title: v.title,
       id: v.medusaProductVariantId,
-      thumbnail: variantData?.thumbnail?.url || undefined,
+      thumbnail: thumbnail ? thumbnail.url : null,
       ...(thumbnailAlt && {
         metadata: { thumbnail_alt: thumbnailAlt },
       }),
@@ -186,9 +177,7 @@ function flattenVariantImages(variantsImagesMap: VariantImagesMap): UpsertProduc
   );
 }
 
-function buildUrlToImageIdMap(
-  productImages: Array<{ url?: string; id?: string }>
-): Map<string, string> {
+function buildUrlToImageIdMap(productImages: Array<{ url?: string; id?: string }>): Map<string, string> {
   const urlToImageId = new Map<string, string>();
   for (const img of productImages) {
     if (img.url && img.id) {
@@ -225,5 +214,3 @@ function computeVariantImageDiff(
 }
 
 // Main Handler
-
-
