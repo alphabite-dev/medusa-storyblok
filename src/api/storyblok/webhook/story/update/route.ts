@@ -44,12 +44,36 @@ export const POST = async (req: MedusaRequest<StoryblokWebhookInput>, res: Medus
     const mapImageUrl = sbModuleService.mapImageUrl.bind(sbModuleService);
     const variants = productStory.content.variants || [];
 
-    // Extract gallery data
-    const { thumbnail, images } = extractProductGalleryImages(productStory.content.gallery, mapImageUrl);
-    const variantsImagesMap = buildVariantsImagesMap(variants, mapImageUrl);
+    // Extract gallery data using service helper methods
+    const { thumbnail, images } = sbModuleService.extractProductGalleryImages(productStory.content.gallery);
+    const variantsImagesMap = sbModuleService.buildVariantsImagesMap(variants);
     const mappedVariants = buildMappedVariants(variants, variantsImagesMap);
 
-    // Update product with all images
+    // Get current product images before update to compute diff
+    const query = container.resolve(ContainerRegistrationKeys.QUERY);
+    const { data: currentProductData } = await query.graph({
+      entity: "product",
+      filters: { id: productStory.content.medusaProductId },
+      fields: ["id", "images.id", "images.url"],
+    });
+    const currentProductImages = currentProductData[0]?.images || [];
+
+    // Compute desired images from Storyblok (product gallery + variant images)
+    const desiredImages = [...images, ...sbModuleService.flattenVariantImages(variantsImagesMap)];
+    const desiredImageUrls = desiredImages.map((img) => img.url).filter((url): url is string => url !== undefined);
+
+    // Build URL to image ID map from current images
+    const urlToImageIdForProduct = buildUrlToImageIdMap(currentProductImages);
+
+    // Compute product image diff
+    const { add: productImagesToAdd, remove: productImagesToRemove } = computeProductImageDiff(
+      desiredImageUrls,
+      urlToImageIdForProduct,
+      currentProductImages
+    );
+
+    // Update product with all images from Storyblok (this should replace all images)
+    // If updateProductsWorkflow doesn't remove images, we'll handle removal separately
     const updatedProducts = await updateProductsWorkflow(container).run({
       input: {
         products: [
@@ -60,11 +84,43 @@ export const POST = async (req: MedusaRequest<StoryblokWebhookInput>, res: Medus
             metadata: {
               thumbnail_alt: thumbnail?.image.alt || "",
             },
-            images: [...images, ...flattenVariantImages(variantsImagesMap)],
+            images: desiredImages,
           },
         ],
       },
     });
+
+    // Remove images that are no longer in Storyblok
+    // If updateProductsWorkflow doesn't remove them, we need to update again with only desired images
+    if (productImagesToRemove.length > 0) {
+      // Get updated product images after the workflow
+      const updatedProductImages = updatedProducts.result[0].images || [];
+      const remainingImageIds = updatedProductImages
+        .map((img) => img.id)
+        .filter((id): id is string => id !== undefined);
+
+      // Check if unwanted images are still there
+      const stillPresent = productImagesToRemove.filter((id) => remainingImageIds.includes(id));
+
+      if (stillPresent.length > 0) {
+        // Update again with only desired images to force removal
+        // Use the desiredImages array we computed earlier (already in the correct format)
+        await updateProductsWorkflow(container).run({
+          input: {
+            products: [
+              {
+                id: productStory.content.medusaProductId,
+                images: desiredImages,
+              },
+            ],
+          },
+        });
+
+        logger.info(
+          `🗑️ Removed ${stillPresent.length} deleted images from product ${productStory.content.medusaProductId}`
+        );
+      }
+    }
 
     // Update variant metadata (title, thumbnail)
     await updateProductVariantsWorkflow(container).run({
@@ -75,11 +131,16 @@ export const POST = async (req: MedusaRequest<StoryblokWebhookInput>, res: Medus
 
     // Sync images for each variant
     const productImages = updatedProducts.result[0].images || [];
-    const urlToImageId = buildUrlToImageIdMap(productImages);
+    const urlToImageIdForVariants = buildUrlToImageIdMap(productImages);
     const resultVariants = updatedProducts.result[0].variants || [];
 
     for (const variantId of Object.keys(variantsImagesMap)) {
-      const { add, remove } = computeVariantImageDiff(variantId, variantsImagesMap, urlToImageId, resultVariants);
+      const { add, remove } = computeVariantImageDiff(
+        variantId,
+        variantsImagesMap,
+        urlToImageIdForVariants,
+        resultVariants
+      );
 
       if (add.length > 0 || remove.length > 0) {
         await batchVariantImagesWorkflow(container).run({
@@ -105,51 +166,7 @@ export const POST = async (req: MedusaRequest<StoryblokWebhookInput>, res: Medus
 // Types
 type VariantImagesMap = Record<string, { thumbnail: UpsertProductImageDTO | null; images: UpsertProductImageDTO[] }>;
 
-// Helper Functions
-
-function extractProductGalleryImages(
-  gallery: GalleryImageBlok[] | undefined,
-  mapImageUrl: (url: string) => string
-): { thumbnail: GalleryImageBlok | undefined; images: UpsertProductImageDTO[] } {
-  const galleryImages = gallery?.filter((item) => item.component === "galleryImage") || [];
-  const thumbnail = galleryImages.find((img) => img.isThumbnail);
-  const images: UpsertProductImageDTO[] = galleryImages
-    .filter((img) => !img.isThumbnail)
-    .map((img) => ({
-      url: mapImageUrl(img.image.filename),
-      metadata: { alt: img.image.alt || "" },
-    }));
-
-  return { thumbnail, images };
-}
-
-function buildVariantsImagesMap(
-  variants: ProductVariantBlok[],
-  mapImageUrl: (url: string) => string
-): VariantImagesMap {
-  return variants.reduce((acc, v) => {
-    const vGallery = (v.gallery || []).filter((item) => item.component === "galleryImage");
-    const thumbnailImg = vGallery.find((img) => img.isThumbnail);
-    const images = vGallery
-      .filter((img) => !img.isThumbnail)
-      .map((img) => ({
-        url: mapImageUrl(img.image.filename),
-        metadata: { alt: img.image.alt || "" },
-      }));
-
-    acc[v.medusaProductVariantId] = {
-      thumbnail: thumbnailImg
-        ? {
-            url: mapImageUrl(thumbnailImg.image.filename),
-            metadata: { alt: thumbnailImg.image.alt || "" },
-          }
-        : null,
-      images,
-    };
-
-    return acc;
-  }, {} as VariantImagesMap);
-}
+// Helper Functions (using service methods for image extraction)
 
 function buildMappedVariants(
   variants: ProductVariantBlok[],
@@ -171,12 +188,6 @@ function buildMappedVariants(
   });
 }
 
-function flattenVariantImages(variantsImagesMap: VariantImagesMap): UpsertProductImageDTO[] {
-  return Object.values(variantsImagesMap).flatMap((v) =>
-    [v.thumbnail, ...v.images].filter((img): img is UpsertProductImageDTO => img !== null)
-  );
-}
-
 function buildUrlToImageIdMap(productImages: Array<{ url?: string; id?: string }>): Map<string, string> {
   const urlToImageId = new Map<string, string>();
   for (const img of productImages) {
@@ -185,6 +196,23 @@ function buildUrlToImageIdMap(productImages: Array<{ url?: string; id?: string }
     }
   }
   return urlToImageId;
+}
+
+function computeProductImageDiff(
+  desiredImageUrls: string[],
+  urlToImageId: Map<string, string>,
+  currentProductImages: Array<{ url?: string; id?: string }>
+): { add: string[]; remove: string[] } {
+  const desiredImageIds = desiredImageUrls
+    .map((url) => (url ? urlToImageId.get(url) : undefined))
+    .filter((id): id is string => id !== undefined);
+
+  const currentImageIds = currentProductImages.map((img) => img.id).filter((id): id is string => id !== undefined);
+
+  const add = desiredImageIds.filter((id) => !currentImageIds.includes(id));
+  const remove = currentImageIds.filter((id) => !desiredImageIds.includes(id));
+
+  return { add, remove };
 }
 
 function computeVariantImageDiff(

@@ -25,25 +25,22 @@ export const POST = async (req: MedusaRequest<StoryblokWebhookInput>, res: Medus
       return res.status(200).end();
     }
 
-    const productStory = await sbModuleService.retrieveProductStory({
-      params: { by_ids: String(story_id) },
-    });
+    // Look up product ID from local database instead of Storyblok
+    // (since the story is already deleted in Storyblok)
+    const productId = await sbModuleService.getProductIdByStoryId(String(story_id));
 
-    if (!productStory) {
-      logger.warn(`No product story found for story_id: ${story_id}`);
-
-      return res.status(500).end();
+    if (!productId) {
+      logger.warn(`No product link found for story_id: ${story_id}. Story may not have been synced.`);
+      return res.status(200).end();
     }
 
     await deleteProductsWorkflow(container).run({
       input: {
-        ids: [productStory.content.medusaProductId],
+        ids: [productId],
       },
     });
 
-    logger.info(
-      `✅ Deleted product ${productStory.content.medusaProductId} from story ${story_id}, slug: ${productStory.slug}`
-    );
+    logger.info(`✅ Deleted product ${productId} from story ${story_id}`);
     return res.status(200).end();
   } catch (err) {
     logger.error("🔥 Failed to process delete story webhook", err);

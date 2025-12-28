@@ -24,6 +24,9 @@ import {
 } from "./types";
 
 import { MedusaError, MedusaService } from "@medusajs/utils";
+import ProductStoryblokLink from "./models/product-storyblok-link";
+import { UpsertProductImageDTO } from "@medusajs/types";
+import { ProductVariantBlok } from "./types";
 
 type InjectedDependencies = {
   logger: Logger;
@@ -55,7 +58,9 @@ const storyblokAxios = ({ spaceId }: { spaceId: string }) =>
     { maxRequests: 5, perMilliseconds: 1000 }
   );
 
-export default class StoryblokModuleService extends MedusaService({}) {
+export default class StoryblokModuleService extends MedusaService({
+  ProductStoryblokLink,
+}) {
   private options: AlphabiteStoryblokPluginOptions;
   private storyblokClient: StoryblokClient;
   private logger: Logger;
@@ -132,9 +137,7 @@ export default class StoryblokModuleService extends MedusaService({}) {
         }
 
         // Filter out the thumbnail from images array to avoid duplicates
-        const imagesToUpload = thumbnail 
-          ? images.filter((img) => img.url !== thumbnail)
-          : images;
+        const imagesToUpload = thumbnail ? images.filter((img) => img.url !== thumbnail) : images;
 
         // Upload all remaining images from images array
         if (imagesToUpload && imagesToUpload.length > 0) {
@@ -173,6 +176,14 @@ export default class StoryblokModuleService extends MedusaService({}) {
       };
 
       const createdStory = (await this.create(story)) as unknown as ISbStoryData<ProductStory>;
+
+      // Save the link between product and story ID
+      try {
+        await this.createProductStoryLink(id, String(createdStory.id));
+      } catch (err) {
+        this.logger.error(`⚠️ Failed to save product-story link for product ${id}`, err);
+        // Don't fail story creation if link save fails
+      }
 
       this.logger.info(`✅ Product story created: ${slug}`);
 
@@ -239,11 +250,145 @@ export default class StoryblokModuleService extends MedusaService({}) {
         // Don't fail the whole operation if folder deletion fails
       }
 
+      // Delete the product-story link
+      try {
+        await this.deleteProductStoryLink(id);
+      } catch (err) {
+        this.logger.error(`⚠️ Failed to delete product-story link for product ${id}`, err);
+        // Don't fail the whole operation if link deletion fails
+      }
+
       return res;
     } catch (err) {
       this.logger.error(`🔥 Failed to delete story: ${id}`, err);
       throw new MedusaError(MedusaError.Types.UNEXPECTED_STATE, "Delete failed");
     }
+  }
+
+  // Product-Storyblok Link Helper Methods
+  async createProductStoryLink(productId: string, storyId: string): Promise<void> {
+    try {
+      // Check if link already exists
+      const existing = await this.listProductStoryblokLinks({
+        product_id: productId,
+      });
+
+      if (existing.length > 0) {
+        // Update existing link
+        await this.updateProductStoryblokLinks(
+          { id: existing[0].id },
+          {
+            storyblok_story_id: storyId,
+          }
+        );
+      } else {
+        // Create new link
+        await this.createProductStoryblokLinks({
+          product_id: productId,
+          storyblok_story_id: storyId,
+        });
+      }
+    } catch (err) {
+      this.logger.error(`Failed to create product-story link: ${productId} -> ${storyId}`, err);
+      throw err;
+    }
+  }
+
+  async getProductIdByStoryId(storyId: string): Promise<string | null> {
+    try {
+      const links = await this.listProductStoryblokLinks({
+        storyblok_story_id: storyId,
+      });
+
+      if (links.length === 0) {
+        return null;
+      }
+
+      return links[0].product_id;
+    } catch (err) {
+      this.logger.error(`Failed to get product ID by story ID: ${storyId}`, err);
+      throw err;
+    }
+  }
+
+  async deleteProductStoryLink(productId: string): Promise<void> {
+    try {
+      const links = await this.listProductStoryblokLinks({
+        product_id: productId,
+      });
+
+      if (links.length > 0) {
+        await this.deleteProductStoryblokLinks([links[0].id]);
+      }
+    } catch (err) {
+      this.logger.error(`Failed to delete product-story link for product: ${productId}`, err);
+      throw err;
+    }
+  }
+
+  // Image Sync Helper Methods (extract data from story, workflows handle the actual updates)
+
+  /**
+   * Extracts product gallery images from a Storyblok story
+   * Returns thumbnail and regular images with normalized URLs
+   */
+  extractProductGalleryImages(gallery: GalleryImageBlok[] | undefined): {
+    thumbnail: GalleryImageBlok | undefined;
+    images: UpsertProductImageDTO[];
+  } {
+    const mapImageUrl = this.mapImageUrl.bind(this);
+    const galleryImages = gallery?.filter((item) => item.component === "galleryImage") || [];
+    const thumbnail = galleryImages.find((img) => img.isThumbnail);
+    const images: UpsertProductImageDTO[] = galleryImages
+      .filter((img) => !img.isThumbnail)
+      .map((img) => ({
+        url: mapImageUrl(img.image.filename),
+        metadata: { alt: img.image.alt || "" },
+      }));
+
+    return { thumbnail, images };
+  }
+
+  /**
+   * Builds a map of variant images from Storyblok story variants
+   */
+  buildVariantsImagesMap(
+    variants: ProductVariantBlok[]
+  ): Record<string, { thumbnail: UpsertProductImageDTO | null; images: UpsertProductImageDTO[] }> {
+    const mapImageUrl = this.mapImageUrl.bind(this);
+    return variants.reduce((acc, v) => {
+      const vGallery = (v.gallery || []).filter((item) => item.component === "galleryImage");
+      const thumbnailImg = vGallery.find((img) => img.isThumbnail);
+      const images = vGallery
+        .filter((img) => !img.isThumbnail)
+        .map((img) => ({
+          url: mapImageUrl(img.image.filename),
+          metadata: { alt: img.image.alt || "" },
+        }));
+
+      acc[v.medusaProductVariantId] = {
+        thumbnail: thumbnailImg
+          ? {
+              url: mapImageUrl(thumbnailImg.image.filename),
+              metadata: { alt: thumbnailImg.image.alt || "" },
+            }
+          : null,
+        images,
+      };
+
+      return acc;
+    }, {} as Record<string, { thumbnail: UpsertProductImageDTO | null; images: UpsertProductImageDTO[] }>);
+  }
+
+  /**
+   * Flattens variant images into a single array for product images
+   */
+  flattenVariantImages(
+    variantsImagesMap: Record<string, { thumbnail: UpsertProductImageDTO | null; images: UpsertProductImageDTO[] }>
+  ): UpsertProductImageDTO[] {
+    return Object.values(variantsImagesMap).flatMap((v) =>
+      [v.thumbnail, ...v.images].filter((img): img is UpsertProductImageDTO => img !== null)
+    );
   }
 
   async listProductsStories({ products_ids, fetchOptions, params }: ListSbProductsStoriesInput) {
@@ -412,19 +557,33 @@ export default class StoryblokModuleService extends MedusaService({}) {
     return this.options;
   }
 
+  /**
+   * Normalizes Storyblok URLs by removing S3 prefix if present
+   * Converts s3.amazonaws.com/a.storyblok.com to a.storyblok.com
+   */
+  normalizeStoryblokUrl(url: string): string {
+    if (url && url.includes("s3.amazonaws.com/a.storyblok.com")) {
+      return url.replace("https://s3.amazonaws.com/a.storyblok.com", "https://a.storyblok.com");
+    }
+    return url;
+  }
+
   mapImageUrl(src: string): string {
+    // Normalize the URL first (fix S3 prefix if present)
+    const normalizedSrc = this.normalizeStoryblokUrl(src);
+
     if (!!this.options?.imageOptimization?.mapImageUrl) {
-      return this.options.imageOptimization.mapImageUrl(src);
+      return this.options.imageOptimization.mapImageUrl(normalizedSrc);
     }
 
     const { width, quality } = this.options?.imageOptimization || {};
 
-    if (!src.includes("storyblok")) {
-      return src;
+    if (!normalizedSrc.includes("storyblok")) {
+      return normalizedSrc;
     }
 
     // Parse the Storyblok URL
-    const url = new URL(src);
+    const url = new URL(normalizedSrc);
     const path = url.pathname;
 
     const hasResize = path.includes("/m/");
@@ -656,17 +815,13 @@ export default class StoryblokModuleService extends MedusaService({}) {
 
     const uploadedImage = uploadImage.data;
 
-    // Fix the filename URL - remove S3 prefix if present
-    if (uploadedImage.filename && uploadedImage.filename.includes("s3.amazonaws.com/a.storyblok.com")) {
-      uploadedImage.filename = uploadedImage.filename.replace(
-        "https://s3.amazonaws.com/a.storyblok.com",
-        "https://a.storyblok.com"
-      );
-    }
+    // Normalize the filename URL - remove S3 prefix if present
+    const normalizedFilename = this.normalizeStoryblokUrl(uploadedImage.filename || "");
 
     // Ensure required fields are populated
     return {
       ...uploadedImage,
+      filename: normalizedFilename,
       fieldtype: "asset",
       meta_data: uploadedImage.meta_data || {},
       alt: altText || uploadedImage.alt || "",
